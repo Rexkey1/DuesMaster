@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - displayName: string (optional)
+    //   - role: string (required, ['super_admin', 'group_admin', 'member'])
+    //   - groupId: string (optional)
+    //
+    // Collection: groups
+    // Document ID: {groupId}
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - adminUid: string (required)
+    //   - duesTarget: number (required)
+    //   - currency: string (required)
+    //   - announcements: list (optional)
+    //
+    // Collection: groups/{groupId}/payments
+    // Document ID: {paymentId}
+    // Fields:
+    //   - id: string (required)
+    //   - memberUid: string (required)
+    //   - groupId: string (required)
+    //   - amount: number (required)
+    //   - date: timestamp (required)
+    //   - status: string (required, 'paid')
+    //   - reference: string (optional)
+    //
+    // Collection: groups/{groupId}/notifications
+    // Document ID: {notificationId}
+    // Fields:
+    //   - id: string (required)
+    //   - memberUid: string (required)
+    //   - groupId: string (required)
+    //   - amount: number (required)
+    //   - status: string (required, ['pending', 'approved', 'rejected'])
+    //   - timestamp: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : {};
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        (getUserData().get('role', '') == 'super_admin') ||
+        (request.auth.token.email == "rexkey@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isGroupAdmin(groupId) {
+      return isAuthenticated() && (
+        (getUserData().get('role', '') == 'group_admin' && getUserData().get('groupId', '') == groupId) ||
+        isSuperAdmin()
+      );
+    }
+
+    function isMemberOfGroup(groupId) {
+      return isAuthenticated() && (
+        getUserData().get('groupId', '') == groupId ||
+        isGroupAdmin(groupId)
+      );
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.role in ['super_admin', 'group_admin', 'member'] &&
+             data.email is string &&
+             data.uid is string;
+    }
+
+    function isValidGroup(data) {
+      return data.keys().hasAll(['name', 'adminUid', 'duesTarget']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.duesTarget is number && data.duesTarget >= 0;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['id', 'memberUid', 'groupId', 'amount', 'date', 'status']) &&
+             data.amount is number && data.amount > 0 &&
+             data.status == 'paid';
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'memberUid', 'groupId', 'amount', 'status', 'timestamp']) &&
+             data.amount is number && data.amount > 0 &&
+             data.status in ['pending', 'approved', 'rejected'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{uid} {
+      allow read: if isAuthenticated() && (request.auth.uid == uid || isSuperAdmin() || (getUserData().get('role', '') == 'group_admin' && getUserData().get('groupId', '') == resource.data.get('groupId', '')));
+      allow create: if isAuthenticated() && request.auth.uid == uid && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == 'member' || (request.resource.data.role == 'super_admin' && request.auth.token.email == "rexkey@gmail.com"));
+      allow update: if isAuthenticated() && (
+        (request.auth.uid == uid && request.resource.data.role == resource.data.role) ||
+        isSuperAdmin() ||
+        (isGroupAdmin(resource.data.get('groupId', '')) && request.resource.data.get('groupId', '') == null)
+      ) && isValidUser(request.resource.data);
+      allow delete: if isSuperAdmin();
+    }
+
+    match /groups/{groupId} {
+      allow read: if isAuthenticated() && isMemberOfGroup(groupId);
+      allow create: if isSuperAdmin() && isValidGroup(request.resource.data);
+      allow update: if isGroupAdmin(groupId) && isValidGroup(request.resource.data);
+      allow delete: if isSuperAdmin();
+
+      match /payments/{paymentId} {
+        allow read: if isAuthenticated() && (isGroupAdmin(groupId) || request.auth.uid == resource.data.memberUid);
+        allow create: if isGroupAdmin(groupId) && isValidPayment(request.resource.data);
+        allow update: if isGroupAdmin(groupId) && isValidPayment(request.resource.data);
+        allow delete: if isGroupAdmin(groupId);
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if isAuthenticated() && (isGroupAdmin(groupId) || request.auth.uid == resource.data.memberUid);
+        allow create: if isAuthenticated() && request.auth.uid == request.resource.data.memberUid && isValidNotification(request.resource.data);
+        allow update: if isGroupAdmin(groupId) && isValidNotification(request.resource.data);
+        allow delete: if isGroupAdmin(groupId) || (request.auth.uid == resource.data.memberUid && resource.data.status == 'pending');
+      }
+
+      match /activity_logs/{logId} {
+        allow read: if isGroupAdmin(groupId);
+        allow create: if isGroupAdmin(groupId);
+      }
+    }
+
+    match /invitations/{inviteId} {
+      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.email || isSuperAdmin() || isGroupAdmin(resource.data.groupId));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isGroupAdmin(request.resource.data.groupId));
+      allow update: if isAuthenticated() && (request.auth.token.email == resource.data.email && request.resource.data.status == 'accepted');
+      allow delete: if isSuperAdmin() || isGroupAdmin(resource.data.groupId);
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "DuesMaster",
+  "description": "A multi-tenant dues management system for churches, clubs, and alumni groups with strict data isolation and role-based access control.",
+  "requestFramePermissions": []
+}

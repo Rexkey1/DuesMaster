@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the DuesMaster system.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique identifier for the user." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "displayName": { "type": "string", "description": "The user's display name." },
+        "role": { "type": "string", "enum": ["super_admin", "group_admin", "member"], "description": "The user's role in the system." },
+        "groupId": { "type": "string", "description": "The ID of the group the user belongs to (if applicable)." }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "An organized group (Church, Alumni, Club, etc.) that manages dues.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique identifier for the group." },
+        "name": { "type": "string", "description": "The name of the group." },
+        "adminUid": { "type": "string", "description": "The UID of the Group Admin." },
+        "duesTarget": { "type": "number", "description": "The target dues amount for the period (in GH₵)." },
+        "currency": { "type": "string", "description": "The currency symbol (GH₵)." },
+        "announcements": { "type": "array", "description": "A list of announcements for the group." }
+      },
+      "required": ["id", "name", "adminUid", "duesTarget"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A record of a dues payment by a member.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique identifier for the payment." },
+        "memberUid": { "type": "string", "description": "The UID of the member who made the payment." },
+        "groupId": { "type": "string", "description": "The ID of the group the payment belongs to." },
+        "amount": { "type": "number", "description": "The amount paid (in GH₵)." },
+        "date": { "type": "string", "format": "date-time", "description": "The date and time of the payment." },
+        "status": { "type": "string", "enum": ["paid"], "description": "The status of the payment." },
+        "reference": { "type": "string", "description": "A reference number for the payment." }
+      },
+      "required": ["id", "memberUid", "groupId", "amount", "date", "status"]
+    },
+    "PaymentNotification": {
+      "title": "PaymentNotification",
+      "description": "A notification sent by a member to an admin to verify a payment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique identifier for the notification." },
+        "memberUid": { "type": "string", "description": "The UID of the member sending the notification." },
+        "groupId": { "type": "string", "description": "The ID of the group." },
+        "amount": { "type": "number", "description": "The amount claimed to have been paid." },
+        "reference": { "type": "string", "description": "A reference number or transaction ID." },
+        "screenshotUrl": { "type": "string", "description": "A URL to a screenshot of the payment receipt." },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "The status of the verification request." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the notification was sent." }
+      },
+      "required": ["id", "memberUid", "groupId", "amount", "status", "timestamp"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "A log of actions performed by admins.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique identifier for the log entry." },
+        "groupId": { "type": "string", "description": "The ID of the group." },
+        "adminUid": { "type": "string", "description": "The UID of the admin who performed the action." },
+        "action": { "type": "string", "description": "A description of the action performed." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the action occurred." }
+      },
+      "required": ["id", "groupId", "adminUid", "action", "timestamp"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "An invitation sent to a potential member or admin.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique identifier for the invitation." },
+        "email": { "type": "string", "format": "email", "description": "The email address invited." },
+        "groupId": { "type": "string", "description": "The ID of the group." },
+        "role": { "type": "string", "enum": ["group_admin", "member"], "description": "The role being invited to." },
+        "status": { "type": "string", "enum": ["pending", "accepted", "expired"], "description": "The status of the invitation." },
+        "invitedBy": { "type": "string", "description": "The UID of the person who sent the invite." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the invite was sent." }
+      },
+      "required": ["id", "email", "groupId", "role", "status", "invitedBy", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "User", "description": "User profiles and roles." },
+    "/groups/{groupId}": { "schema": "Group", "description": "Group settings and metadata." },
+    "/groups/{groupId}/payments/{paymentId}": { "schema": "Payment", "description": "Payment records for a group." },
+    "/groups/{groupId}/notifications/{notificationId}": { "schema": "PaymentNotification", "description": "Payment verification requests." },
+    "/groups/{groupId}/activity_logs/{logId}": { "schema": "ActivityLog", "description": "Admin activity logs for a group." },
+    "/invitations/{inviteId}": { "schema": "Invitation", "description": "Pending invitations." }
+  }
+}
