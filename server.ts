@@ -35,8 +35,9 @@ async function startServer() {
     }
 
     try {
+      const fromEmail = process.env.RESEND_FROM_EMAIL || 'DuesMaster <onboarding@resend.dev>';
       const { data, error } = await resend.emails.send({
-        from: 'DuesMaster <onboarding@resend.dev>',
+        from: fromEmail,
         to: [email],
         subject: `Invitation to join ${groupName}`,
         html: `
@@ -53,20 +54,19 @@ async function startServer() {
       if (error) {
         console.error('Resend API Error:', error);
         
-        // Fallback to mock mode if it's a validation error (e.g. unverified domain/recipient)
-        if ((error as any).name === 'validation_error' || (error as any).message?.includes('testing emails')) {
-          console.log('--- FALLBACK TO MOCK EMAIL (Resend Restriction) ---');
-          console.log(`To: ${email}`);
-          console.log(`Link: ${inviteLink}`);
-          console.log('--------------------------------------------------');
-          return res.json({ 
-            success: true, 
-            message: 'Email logged to console (Resend restricted to account owner in test mode)',
-            fallback: true 
-          });
-        }
+        // Fallback to mock mode for ANY Resend error in this environment
+        // This ensures the user can always create groups and invitations even if email fails
+        console.log('--- FALLBACK TO MOCK EMAIL (Resend Error) ---');
+        console.log(`To: ${email}`);
+        console.log(`Link: ${inviteLink}`);
+        console.log('---------------------------------------------');
         
-        return res.status(400).json({ error });
+        return res.json({ 
+          success: true, 
+          message: 'Email logged to console (Resend service unavailable or restricted)',
+          fallback: true,
+          debug: error
+        });
       }
 
       res.json({ success: true, data });

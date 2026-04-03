@@ -113,7 +113,10 @@ export const Login: React.FC = () => {
         return; // Ignore user cancellations
       }
       console.error("Login error:", error);
-      toast.error("Failed to login. Please try again.");
+      const errorMessage = error.code === 'auth/unauthorized-domain' 
+        ? "This domain is not authorized in Firebase Console. Please add it to Authentication > Settings > Authorized domains."
+        : `Failed to login: ${error.code || error.message}`;
+      toast.error(errorMessage, { duration: 6000 });
     }
   };
 
