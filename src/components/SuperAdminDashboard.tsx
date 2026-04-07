@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, addDoc, deleteDoc, doc, updateDoc, getDocs, where, setDoc, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, deleteDoc, doc, getDocs, where, setDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Building2, Users, CreditCard, Plus, Trash2, UserPlus, Search, Mail } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -38,10 +38,11 @@ export const SuperAdminDashboard: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [duesTarget, setDuesTarget] = useState(100);
-  const [invitations, setInvitations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, 'groups'));
@@ -49,29 +50,31 @@ export const SuperAdminDashboard: React.FC = () => {
       const groupsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Group));
       setGroups(groupsData);
       setLoading(false);
-    });
-
-    // Fetch Invitations
-    const invQ = query(collection(db, 'invitations'), where('role', '==', 'group_admin'), orderBy('timestamp', 'desc'));
-    const unsubInv = onSnapshot(invQ, (snapshot) => {
-      setInvitations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+      console.error("Error fetching groups:", error);
+      handleFirestoreError(error, OperationType.LIST, 'groups');
     });
 
     return () => {
       unsubscribe();
-      unsubInv();
     };
   }, []);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (adminPassword.length < 6) {
+      toast.error("Password must be at least 6 characters long.");
+      return;
+    }
+    
+    setIsCreating(true);
     try {
-      // 1. Create group (initially without adminUid if not found, or just create it)
+      // 1. Create group
       let groupRef;
       try {
         groupRef = await addDoc(collection(db, 'groups'), {
           name: newGroupName,
-          adminUid: 'pending', // Will be updated when invite is accepted
+          adminUid: 'pending', // Will be updated when admin logs in for the first time
           duesTarget,
           currency: 'GH₵',
           announcements: [],
@@ -84,58 +87,36 @@ export const SuperAdminDashboard: React.FC = () => {
         throw error;
       }
 
-      // 2. Create invitation
-      const inviteId = crypto.randomUUID();
-      const inviteLink = `${window.location.origin}/invite/${inviteId}`;
-
+      // 2. Pre-approve the admin role and save temporary password
       try {
-        await setDoc(doc(db, 'invitations', inviteId), {
-          id: inviteId,
-          email: adminEmail,
-          groupId: groupRef.id,
+        const normalizedEmail = adminEmail.toLowerCase().trim();
+        
+        // Create user_roles entry
+        await setDoc(doc(db, 'user_roles', normalizedEmail), {
+          email: normalizedEmail,
           role: 'group_admin',
-          status: 'pending',
-          invitedBy: 'Super Admin',
-          timestamp: new Date().toISOString()
+          groupId: groupRef.id,
+          tempPassword: adminPassword, // Save password for lazy account creation
+          createdAt: new Date().toISOString()
         });
+
       } catch (error: any) {
         if (error.message?.includes('insufficient permissions')) {
-          handleFirestoreError(error, OperationType.WRITE, `invitations/${inviteId}`);
+          handleFirestoreError(error, OperationType.WRITE, `user_roles/${adminEmail}`);
         }
         throw error;
       }
 
-      // 3. Send automated email via API
-      const response = await fetch('/api/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: adminEmail,
-          groupName: newGroupName,
-          role: 'group_admin',
-          invitedBy: 'Super Admin',
-          inviteLink
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error("Email API error:", errorData);
-        throw new Error(errorData.error?.message || errorData.error || 'Failed to send email');
-      }
-
-      const result = await response.json();
-      if (result.fallback) {
-        toast.success(`Group created! (Email logged to console due to Resend restrictions)`);
-      } else {
-        toast.success(`Group created and invitation sent to ${adminEmail}!`);
-      }
+      toast.success(`Group created! Admin can now log in with the provided credentials.`);
       setIsModalOpen(false);
       setNewGroupName('');
       setAdminEmail('');
+      setAdminPassword('');
     } catch (error) {
       console.error("Error creating group:", error);
       toast.error("Failed to create group.");
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -167,7 +148,7 @@ export const SuperAdminDashboard: React.FC = () => {
       </header>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
             <Building2 className="w-6 h-6" />
@@ -177,21 +158,11 @@ export const SuperAdminDashboard: React.FC = () => {
             <p className="text-2xl font-bold text-slate-900">{groups.length}</p>
           </div>
         </div>
-        
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-            <Mail className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm text-slate-500 font-medium">Pending Admin Invites</p>
-            <p className="text-2xl font-bold text-slate-900">{invitations.filter(i => i.status === 'pending').length}</p>
-          </div>
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 gap-8">
         {/* Groups List */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <h2 className="text-lg font-bold text-slate-900">Active Groups</h2>
             <div className="relative">
@@ -244,38 +215,6 @@ export const SuperAdminDashboard: React.FC = () => {
             </table>
           </div>
         </div>
-
-        {/* Invitations Sidebar */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-          <h2 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-            Admin Invitations
-            {invitations.filter(i => i.status === 'pending').length > 0 && (
-              <span className="w-5 h-5 bg-indigo-500 text-white text-[10px] flex items-center justify-center rounded-full">
-                {invitations.filter(i => i.status === 'pending').length}
-              </span>
-            )}
-          </h2>
-          <div className="space-y-4">
-            {invitations.map((invite) => (
-              <div key={invite.id} className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-                <div className="flex justify-between items-start mb-2">
-                  <p className="text-sm font-bold text-slate-900 truncate max-w-[150px]">{invite.email}</p>
-                  <span className={cn(
-                    "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded",
-                    invite.status === 'pending' ? "bg-amber-100 text-amber-700" :
-                    invite.status === 'accepted' ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                  )}>
-                    {invite.status}
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400">Sent: {format(new Date(invite.timestamp), 'MMM d, h:mm a')}</p>
-              </div>
-            ))}
-            {invitations.length === 0 && (
-              <p className="text-sm text-slate-500 text-center py-4">No invitations sent yet.</p>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Create Group Modal */}
@@ -305,7 +244,19 @@ export const SuperAdminDashboard: React.FC = () => {
                   placeholder="admin@example.com"
                   className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
-                <p className="mt-1 text-xs text-slate-500">An invitation email will be sent to this address.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Admin Password</label>
+                <input 
+                  type="password" 
+                  required
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  minLength={6}
+                />
+                <p className="mt-1 text-xs text-slate-500">The admin will use this password to log in.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Dues Target (GH₵)</label>
@@ -327,9 +278,10 @@ export const SuperAdminDashboard: React.FC = () => {
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100"
+                  disabled={isCreating}
+                  className="flex-1 px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Create Group
+                  {isCreating ? 'Creating...' : 'Create Group'}
                 </button>
               </div>
             </form>

@@ -5,6 +5,13 @@ service cloud.firestore {
     // Assumed Data Model
     // ===============================================================
     //
+    // Collection: user_roles
+    // Document ID: {email}
+    // Fields:
+    //   - email: string
+    //   - role: string
+    //   - groupId: string
+    //
     // Collection: users
     // Document ID: {uid}
     // Fields:
@@ -60,24 +67,31 @@ service cloud.firestore {
       return exists(path) ? get(path).data : {};
     }
 
+    function getPreApprovedRole() {
+      let email = request.auth.token.get('email', '').lower();
+      return email != '' && exists(/databases/$(database)/documents/user_roles/$(email)) 
+        ? get(/databases/$(database)/documents/user_roles/$(email)).data 
+        : null;
+    }
+
     function isSuperAdmin() {
       return isAuthenticated() && (
         (getUserData().get('role', '') == 'super_admin') ||
-        (request.auth.token.email == "rexkey@gmail.com" && request.auth.token.email_verified == true)
+        (request.auth.token.get('email', '') == "rexkey@gmail.com")
       );
     }
 
     function isGroupAdmin(groupId) {
       return isAuthenticated() && (
-        (getUserData().get('role', '') == 'group_admin' && getUserData().get('groupId', '') == groupId) ||
-        isSuperAdmin()
+        isSuperAdmin() ||
+        (getUserData().get('role', '') == 'group_admin' && getUserData().get('groupId', '') == groupId)
       );
     }
 
     function isMemberOfGroup(groupId) {
       return isAuthenticated() && (
-        getUserData().get('groupId', '') == groupId ||
-        isGroupAdmin(groupId)
+        isSuperAdmin() ||
+        getUserData().get('groupId', '') == groupId
       );
     }
 
@@ -110,15 +124,34 @@ service cloud.firestore {
     // Rules
     // ===============================================================
 
+    match /user_roles/{email} {
+      allow read: if isAuthenticated() && (request.auth.token.get('email', '').lower() == email || isSuperAdmin());
+      allow create, update: if isSuperAdmin() || (
+        isAuthenticated() && 
+        getUserData().get('role', '') == 'group_admin' && 
+        request.resource.data.role == 'member' && 
+        request.resource.data.groupId == getUserData().get('groupId', '') &&
+        (resource == null || resource.data.groupId == getUserData().get('groupId', ''))
+      );
+      allow delete: if isSuperAdmin();
+    }
+
     match /users/{uid} {
-      allow read: if isAuthenticated() && (request.auth.uid == uid || isSuperAdmin() || (getUserData().get('role', '') == 'group_admin' && getUserData().get('groupId', '') == resource.data.get('groupId', '')));
+      allow read: if isAuthenticated() && request.auth.uid == uid;
+      allow read: if isSuperAdmin();
+      allow read: if isAuthenticated() && resource != null && getUserData().get('role', '') == 'group_admin' && getUserData().get('groupId', '') == resource.data.get('groupId', '');
+      
       allow create: if isAuthenticated() && request.auth.uid == uid && isValidUser(request.resource.data) && 
-                    (request.resource.data.role == 'member' || (request.resource.data.role == 'super_admin' && request.auth.token.email == "rexkey@gmail.com"));
-      allow update: if isAuthenticated() && (
-        (request.auth.uid == uid && request.resource.data.role == resource.data.role) ||
-        isSuperAdmin() ||
-        (isGroupAdmin(resource.data.get('groupId', '')) && request.resource.data.get('groupId', '') == null)
-      ) && isValidUser(request.resource.data);
+                    (
+                      request.resource.data.role == 'member' || 
+                      (request.resource.data.role == 'super_admin' && request.auth.token.get('email', '') == "rexkey@gmail.com") ||
+                      (getPreApprovedRole() != null && request.resource.data.role == getPreApprovedRole().role && request.resource.data.groupId == getPreApprovedRole().groupId)
+                    );
+                    
+      allow update: if isAuthenticated() && request.auth.uid == uid && request.resource.data.role == resource.data.role && isValidUser(request.resource.data);
+      allow update: if isSuperAdmin() && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && resource != null && isGroupAdmin(resource.data.get('groupId', '')) && request.resource.data.get('groupId', '') == null && isValidUser(request.resource.data);
+      
       allow delete: if isSuperAdmin();
     }
 
@@ -149,9 +182,9 @@ service cloud.firestore {
     }
 
     match /invitations/{inviteId} {
-      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.email || isSuperAdmin() || isGroupAdmin(resource.data.groupId));
+      allow read: if isAuthenticated() && (request.auth.token.get('email', '') == resource.data.email || isSuperAdmin() || isGroupAdmin(resource.data.groupId));
       allow create: if isAuthenticated() && (isSuperAdmin() || isGroupAdmin(request.resource.data.groupId));
-      allow update: if isAuthenticated() && (request.auth.token.email == resource.data.email && request.resource.data.status == 'accepted');
+      allow update: if isAuthenticated() && (request.auth.token.get('email', '') == resource.data.email && request.resource.data.status == 'accepted');
       allow delete: if isSuperAdmin() || isGroupAdmin(resource.data.groupId);
     }
   }

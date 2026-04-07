@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -12,19 +12,25 @@ import {
   X,
   ShieldCheck,
   Building2,
-  History
+  History,
+  KeyRound
 } from 'lucide-react';
 import { auth } from '../firebase';
+import { updatePassword } from 'firebase/auth';
 import { cn } from '../lib/utils';
+import { toast } from 'react-hot-toast';
 
 export const Layout: React.FC = () => {
   const { profile } = useAuth();
-  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const location = useLocation();
 
   const navigation = [
-    { name: 'Dashboard', href: '/', icon: LayoutDashboard, roles: ['super_admin', 'group_admin', 'member'] },
-    { name: 'Groups', href: '/groups', icon: Building2, roles: ['super_admin'] },
+    { name: 'Dashboard', href: '/', icon: LayoutDashboard, roles: ['group_admin', 'member'] },
+    { name: 'Groups', href: '/', icon: Building2, roles: ['super_admin'] },
     { name: 'Members', href: '/members', icon: Users, roles: ['group_admin'] },
     { name: 'Payments', href: '/payments', icon: CreditCard, roles: ['group_admin', 'member'] },
     { name: 'Notifications', href: '/notifications', icon: Bell, roles: ['group_admin', 'member'] },
@@ -36,6 +42,32 @@ export const Layout: React.FC = () => {
   );
 
   const handleLogout = () => auth.signOut();
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth.currentUser) return;
+    if (newPassword.length < 6) {
+      toast.error("Password must be at least 6 characters long.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      await updatePassword(auth.currentUser, newPassword);
+      toast.success("Password updated successfully!");
+      setIsPasswordModalOpen(false);
+      setNewPassword('');
+    } catch (error: any) {
+      console.error("Error updating password:", error);
+      if (error.code === 'auth/requires-recent-login') {
+        toast.error("Please log out and log back in to change your password.");
+      } else {
+        toast.error(`Failed to update password: ${error.message}`);
+      }
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -79,10 +111,17 @@ export const Layout: React.FC = () => {
               </div>
             </div>
             <button
-              onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-indigo-200 hover:bg-indigo-800 hover:text-white transition-colors"
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="w-full flex items-center gap-3 px-4 py-2 mb-1 rounded-lg text-sm font-medium text-indigo-200 hover:bg-indigo-800 hover:text-white transition-colors"
             >
-              <LogOut className="w-5 h-5" />
+              <KeyRound className="w-4 h-4" />
+              Change Password
+            </button>
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-medium text-indigo-200 hover:bg-indigo-800 hover:text-white transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
               Logout
             </button>
           </div>
@@ -118,6 +157,45 @@ export const Layout: React.FC = () => {
           className="fixed inset-0 bg-slate-900/50 z-40 lg:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
+      )}
+
+      {/* Change Password Modal */}
+      {isPasswordModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Change Password</h2>
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
+                <input 
+                  type="password" 
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  minLength={6}
+                />
+              </div>
+              <div className="flex gap-3 mt-8">
+                <button 
+                  type="button"
+                  onClick={() => setIsPasswordModalOpen(false)}
+                  className="flex-1 px-4 py-2 text-slate-600 font-medium hover:bg-slate-50 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  disabled={isChangingPassword}
+                  className="flex-1 px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isChangingPassword ? 'Updating...' : 'Update'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
